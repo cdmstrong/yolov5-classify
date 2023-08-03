@@ -19,14 +19,14 @@ RANK = int(os.getenv('RANK', -1))
 DEPRECATION_WARNING = f"{colorstr('wandb')}: WARNING ⚠️ wandb is deprecated and will be removed in a future release. " \
                       f'See supported integrations at https://github.com/ultralytics/yolov5#integrations.'
 
-try:
-    import wandb
+# try:
+#     import wandb
 
-    assert hasattr(wandb, '__version__')  # verify package import not local dir
-    LOGGER.warning(DEPRECATION_WARNING)
-except (ImportError, AssertionError):
-    wandb = None
-
+#     assert hasattr(wandb, '__version__')  # verify package import not local dir
+#     LOGGER.warning(DEPRECATION_WARNING)
+# except (ImportError, AssertionError):
+#     wandb = None
+wandb = None
 
 class WandbLogger():
     """Log training runs, datasets, models, and predictions to Weights & Biases.

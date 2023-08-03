@@ -82,7 +82,29 @@ class Annotator:
         else:  # use cv2
             self.im = im
         self.lw = line_width or max(round(sum(im.shape) / 2 * 0.003), 2)  # line width
-
+    # cut img from origin image
+    def cut_img(self, save_path, box):
+        x1, y1, x2, y2 = box
+        if self.pil:
+            img_arr = np.array(self.im)
+            cropped_data = img_arr[y1:y2, x1:x2]
+            # 将裁剪后的NumPy数组转换为图像并保存到输出文件
+            cropped_image = Image.fromarray(cropped_data)
+            cv2.imwrite(save_path, cropped_image)
+        else:
+            import random
+            import string
+            if os.path.isfile(save_path):
+                print(save_path)
+                arr = save_path.split('/')
+                ori = "/".join(arr[:-1])
+                filename = arr[-1].split('.')[0]
+                print(ori)
+                rand_string = ''.join(random.choices(string.ascii_lowercase, k=3))
+                save_path = ori + "/" + filename + rand_string + ".jpg"
+            cropped_image = self.im[int(y1):int(y2 + 1), int(x1):int(x2 + 1)]
+            # 将裁剪后的NumPy数组转换为图像并保存到输出文件
+            cv2.imwrite(save_path, cropped_image)
     def box_label(self, box, label='', color=(128, 128, 128), txt_color=(255, 255, 255)):
         # Add one xyxy box to image with label
         if self.pil or not is_ascii(label):

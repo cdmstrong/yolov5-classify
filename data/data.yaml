@@ -1,0 +1,13 @@
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+nc: 7
+names: ['0', '1', '2', '3', '4', '5', '6']
+
+roboflow:
+  workspace: project
+  project: -car-heavy-truck-tanker-excavator-non-motorized
+  version: 1
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/project/-car-heavy-truck-tanker-excavator-non-motorized/dataset/1

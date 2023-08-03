@@ -32,6 +32,138 @@ from utils.general import (LOGGER, ROOT, Profile, check_requirements, check_suff
 from utils.plots import Annotator, colors, save_one_box
 from utils.torch_utils import copy_attr, smart_inference_mode
 
+class StemBlock(nn.Module):
+    def __init__(self, c1, c2, k=3, s=2, p=None, g=1, act=True):
+        super(StemBlock, self).__init__()
+        self.stem_1 = Conv(c1, c2, k, s, p, g, act)
+        self.stem_2a = Conv(c2, c2 // 2, 1, 1, 0)
+        self.stem_2b = Conv(c2 // 2, c2, 3, 2, 1)
+        self.stem_2p = nn.MaxPool2d(kernel_size=2,stride=2,ceil_mode=True)
+        self.stem_3 = Conv(c2 * 2, c2, 1, 1, 0)
+
+    def forward(self, x):
+        stem_1_out  = self.stem_1(x)
+        stem_2a_out = self.stem_2a(stem_1_out)
+        stem_2b_out = self.stem_2b(stem_2a_out)
+        stem_2p_out = self.stem_2p(stem_1_out)
+        out = self.stem_3(torch.cat((stem_2b_out,stem_2p_out),1))
+        assert  torch.any(out >= 0) , "error" 
+        return out
+
+class ShuffleV2Block(nn.Module):
+    def __init__(self, inp, oup, stride):
+        super(ShuffleV2Block, self).__init__()
+
+        if not (1 <= stride <= 3):
+            raise ValueError('illegal stride value')
+        self.stride = stride
+
+        branch_features = oup // 2
+        assert (self.stride != 1) or (inp == branch_features << 1)
+
+        if self.stride > 1:
+            self.branch1 = nn.Sequential(
+                self.depthwise_conv(inp, inp, kernel_size=3, stride=self.stride, padding=1),
+                nn.BatchNorm2d(inp),
+                nn.Conv2d(inp, branch_features, kernel_size=1, stride=1, padding=0, bias=False),
+                nn.BatchNorm2d(branch_features),
+                nn.SiLU(),
+            )
+        else:
+            self.branch1 = nn.Sequential()
+
+        self.branch2 = nn.Sequential(
+            nn.Conv2d(inp if (self.stride > 1) else branch_features, branch_features, kernel_size=1, stride=1, padding=0, bias=False),
+            nn.BatchNorm2d(branch_features),
+            nn.SiLU(),
+            self.depthwise_conv(branch_features, branch_features, kernel_size=3, stride=self.stride, padding=1),
+            nn.BatchNorm2d(branch_features),
+            nn.Conv2d(branch_features, branch_features, kernel_size=1, stride=1, padding=0, bias=False),
+            nn.BatchNorm2d(branch_features),
+            nn.SiLU(),
+        )
+
+    @staticmethod
+    def depthwise_conv(i, o, kernel_size, stride=1, padding=0, bias=False):
+        return nn.Conv2d(i, o, kernel_size, stride, padding, bias=bias, groups=i)
+
+    def forward(self, x):
+        if self.stride == 1:
+            x1, x2 = x.chunk(2, dim=1)
+            out = torch.cat((x1, self.branch2(x2)), dim=1)
+        else:
+            out = torch.cat((self.branch1(x), self.branch2(x)), dim=1)
+        out = channel_shuffle(out, 2)
+        assert  torch.any(out >= 0) , "error" 
+        return out
+
+class BlazeBlock(nn.Module):
+    def __init__(self, in_channels,out_channels,mid_channels=None,stride=1):
+        super(BlazeBlock, self).__init__()
+        mid_channels = mid_channels or in_channels
+        assert stride in [1, 2]
+        if stride>1:
+            self.use_pool = True
+        else:
+            self.use_pool = False
+
+        self.branch1 = nn.Sequential(
+            nn.Conv2d(in_channels=in_channels,out_channels=mid_channels,kernel_size=5,stride=stride,padding=2,groups=in_channels),
+            nn.BatchNorm2d(mid_channels),
+            nn.Conv2d(in_channels=mid_channels,out_channels=out_channels,kernel_size=1,stride=1),
+            nn.BatchNorm2d(out_channels),
+        )
+
+        if self.use_pool:
+            self.shortcut = nn.Sequential(
+                nn.MaxPool2d(kernel_size=stride, stride=stride),
+                nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=1, stride=1),
+                nn.BatchNorm2d(out_channels),
+            )
+
+        self.relu = nn.SiLU(inplace=True)
+
+    def forward(self, x):
+        branch1 = self.branch1(x)
+        out = (branch1+self.shortcut(x)) if self.use_pool else (branch1+x)
+        return self.relu(out)    
+  
+class DoubleBlazeBlock(nn.Module):
+    def __init__(self,in_channels,out_channels,mid_channels=None,stride=1):
+        super(DoubleBlazeBlock, self).__init__()
+        mid_channels = mid_channels or in_channels
+        assert stride in [1, 2]
+        if stride > 1:
+            self.use_pool = True
+        else:
+            self.use_pool = False
+
+        self.branch1 = nn.Sequential(
+            nn.Conv2d(in_channels=in_channels, out_channels=in_channels, kernel_size=5, stride=stride,padding=2,groups=in_channels),
+            nn.BatchNorm2d(in_channels),
+            nn.Conv2d(in_channels=in_channels, out_channels=mid_channels, kernel_size=1, stride=1),
+            nn.BatchNorm2d(mid_channels),
+            nn.SiLU(inplace=True),
+            nn.Conv2d(in_channels=mid_channels, out_channels=mid_channels, kernel_size=5, stride=1,padding=2),
+            nn.BatchNorm2d(mid_channels),
+            nn.Conv2d(in_channels=mid_channels, out_channels=out_channels, kernel_size=1, stride=1),
+            nn.BatchNorm2d(out_channels),
+        )
+
+        if self.use_pool:
+            self.shortcut = nn.Sequential(
+                nn.MaxPool2d(kernel_size=stride, stride=stride),
+                nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=1, stride=1),
+                nn.BatchNorm2d(out_channels),
+            )
+
+        self.relu = nn.SiLU(inplace=True)
+
+    def forward(self, x):
+        branch1 = self.branch1(x)
+        out = (branch1 + self.shortcut(x)) if self.use_pool else (branch1 + x)
+        return self.relu(out)
+   
 
 def autopad(k, p=None, d=1):  # kernel, padding, dilation
     # Pad to 'same' shape outputs
@@ -40,7 +172,23 @@ def autopad(k, p=None, d=1):  # kernel, padding, dilation
     if p is None:
         p = k // 2 if isinstance(k, int) else [x // 2 for x in k]  # auto-pad
     return p
+def channel_shuffle(x, groups):
+    batchsize, num_channels, height, width = x.data.size()
+    channels_per_group = num_channels // groups
 
+    # reshape
+    x = x.view(batchsize, groups, channels_per_group, height, width)
+    x = torch.transpose(x, 1, 2).contiguous()
+
+    # flatten
+    x = x.view(batchsize, -1, height, width)
+    # x = x.view(batchsize, groups, channels_per_group, height, width)
+    # print(x.shape)
+    # temp = torch.zeros_like(x)
+    # for i in range(groups):
+    #     temp[:, i*channels_per_group:(i+1)*channels_per_group, :, :, :] = x[:, i, :, :, :]
+    # x = temp.view(batchsize, -1, height, width)
+    return x
 
 class Conv(nn.Module):
     # Standard convolution with args(ch_in, ch_out, kernel, stride, padding, groups, dilation, activation)

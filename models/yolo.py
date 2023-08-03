@@ -33,7 +33,71 @@ try:
     import thop  # for FLOPs computation
 except ImportError:
     thop = None
+class StemBlock(nn.Module):
+    def __init__(self, c1, c2, k=3, s=2, p=None, g=1, act=True):
+        super(StemBlock, self).__init__()
+        self.stem_1 = Conv(c1, c2, k, s, p, g, act)
+        self.stem_2a = Conv(c2, c2 // 2, 1, 1, 0)
+        self.stem_2b = Conv(c2 // 2, c2, 3, 2, 1)
+        self.stem_2p = nn.MaxPool2d(kernel_size=2,stride=2,ceil_mode=True)
+        self.stem_3 = Conv(c2 * 2, c2, 1, 1, 0)
 
+    def forward(self, x):
+        stem_1_out  = self.stem_1(x)
+        stem_2a_out = self.stem_2a(stem_1_out)
+        stem_2b_out = self.stem_2b(stem_2a_out)
+        stem_2p_out = self.stem_2p(stem_1_out)
+        out = self.stem_3(torch.cat((stem_2b_out,stem_2p_out),1))
+        assert  torch.any(out >= 0) , "error" 
+        return out
+
+class ShuffleV2Block(nn.Module):
+    def __init__(self, inp, oup, stride):
+        super(ShuffleV2Block, self).__init__()
+
+        if not (1 <= stride <= 3):
+            raise ValueError('illegal stride value')
+        self.stride = stride
+
+        branch_features = oup // 2
+        assert (self.stride != 1) or (inp == branch_features << 1)
+
+        if self.stride > 1:
+            self.branch1 = nn.Sequential(
+                self.depthwise_conv(inp, inp, kernel_size=3, stride=self.stride, padding=1),
+                nn.BatchNorm2d(inp),
+                nn.Conv2d(inp, branch_features, kernel_size=1, stride=1, padding=0, bias=False),
+                nn.BatchNorm2d(branch_features),
+                nn.SiLU(),
+            )
+        else:
+            self.branch1 = nn.Sequential()
+
+        self.branch2 = nn.Sequential(
+            nn.Conv2d(inp if (self.stride > 1) else branch_features, branch_features, kernel_size=1, stride=1, padding=0, bias=False),
+            nn.BatchNorm2d(branch_features),
+            nn.SiLU(),
+            self.depthwise_conv(branch_features, branch_features, kernel_size=3, stride=self.stride, padding=1),
+            nn.BatchNorm2d(branch_features),
+            nn.Conv2d(branch_features, branch_features, kernel_size=1, stride=1, padding=0, bias=False),
+            nn.BatchNorm2d(branch_features),
+            nn.SiLU(),
+        )
+
+    @staticmethod
+    def depthwise_conv(i, o, kernel_size, stride=1, padding=0, bias=False):
+        return nn.Conv2d(i, o, kernel_size, stride, padding, bias=bias, groups=i)
+
+    def forward(self, x):
+        if self.stride == 1:
+            x1, x2 = x.chunk(2, dim=1)
+            out = torch.cat((x1, self.branch2(x2)), dim=1)
+        else:
+            out = torch.cat((self.branch1(x), self.branch2(x)), dim=1)
+        out = channel_shuffle(out, 2)
+        assert  torch.any(out >= 0) , "error" 
+        return out
+    
 
 class Detect(nn.Module):
     # YOLOv5 Detect head for detection models
@@ -58,25 +122,26 @@ class Detect(nn.Module):
         for i in range(self.nl):
             x[i] = self.m[i](x[i])  # conv
             bs, _, ny, nx = x[i].shape  # x(bs,255,20,20) to x(bs,3,20,20,85)
-            x[i] = x[i].view(bs, self.na, self.no, ny, nx).permute(0, 1, 3, 4, 2).contiguous()
+            # x[i] = x[i].view(bs, self.na, self.no, ny, nx).permute(0, 1, 3, 4, 2).contiguous()
+            x[i] = x[i].view(bs, self.na, self.no, -1)
+            # if not self.training:  # inference
+            #     if self.dynamic or self.grid[i].shape[2:4] != x[i].shape[2:4]:
+            #         self.grid[i], self.anchor_grid[i] = self._make_grid(nx, ny, i)
 
-            if not self.training:  # inference
-                if self.dynamic or self.grid[i].shape[2:4] != x[i].shape[2:4]:
-                    self.grid[i], self.anchor_grid[i] = self._make_grid(nx, ny, i)
-
-                if isinstance(self, Segment):  # (boxes + masks)
-                    xy, wh, conf, mask = x[i].split((2, 2, self.nc + 1, self.no - self.nc - 5), 4)
-                    xy = (xy.sigmoid() * 2 + self.grid[i]) * self.stride[i]  # xy
-                    wh = (wh.sigmoid() * 2) ** 2 * self.anchor_grid[i]  # wh
-                    y = torch.cat((xy, wh, conf.sigmoid(), mask), 4)
-                else:  # Detect (boxes only)
-                    xy, wh, conf = x[i].sigmoid().split((2, 2, self.nc + 1), 4)
-                    xy = (xy * 2 + self.grid[i]) * self.stride[i]  # xy
-                    wh = (wh * 2) ** 2 * self.anchor_grid[i]  # wh
-                    y = torch.cat((xy, wh, conf), 4)
-                z.append(y.view(bs, self.na * nx * ny, self.no))
-
-        return x if self.training else (torch.cat(z, 1),) if self.export else (torch.cat(z, 1), x)
+            #     if isinstance(self, Segment):  # (boxes + masks)
+            #         xy, wh, conf, mask = x[i].split((2, 2, self.nc + 1, self.no - self.nc - 5), 4)
+            #         xy = (xy.sigmoid() * 2 + self.grid[i]) * self.stride[i]  # xy
+            #         wh = (wh.sigmoid() * 2) ** 2 * self.anchor_grid[i]  # wh
+            #         y = torch.cat((xy, wh, conf.sigmoid(), mask), 4)
+            #     else:  # Detect (boxes only) 
+            #         xy, wh, conf = x[i].sigmoid().split((2, 2, self.nc + 1), 4)
+            #         xy = (xy * 2 + self.grid[i]) * self.stride[i]  # xy
+            #         wh = (wh * 2) ** 2 * self.anchor_grid[i]  # wh
+            #         y = torch.cat((xy, wh, conf), 4)
+            #     z.append(y.view(bs, self.na * nx * ny, self.no))
+        return x 
+        
+        # return x if self.training else (torch.cat(z, 1),) if self.export else (torch.cat(z, 1), x)
 
     def _make_grid(self, nx=20, ny=20, i=0, torch_1_10=check_version(torch.__version__, '1.10.0')):
         d = self.anchors[i].device
@@ -287,6 +352,8 @@ class ClassificationModel(BaseModel):
         c.i, c.f, c.type = m.i, m.f, 'models.common.Classify'  # index, from, type
         model.model[-1] = c  # replace
         self.model = model.model
+        print("model.model------------------------------------------")
+        print(model.model)
         self.stride = model.stride
         self.save = []
         self.nc = nc
@@ -316,7 +383,7 @@ def parse_model(d, ch):  # model_dict, input_channels(3)
         n = n_ = max(round(n * gd), 1) if n > 1 else n  # depth gain
         if m in {
                 Conv, GhostConv, Bottleneck, GhostBottleneck, SPP, SPPF, DWConv, MixConv2d, Focus, CrossConv,
-                BottleneckCSP, C3, C3TR, C3SPP, C3Ghost, nn.ConvTranspose2d, DWConvTranspose2d, C3x}:
+                BottleneckCSP, C3, C3TR, C3SPP, C3Ghost, StemBlock, ShuffleV2Block, nn.ConvTranspose2d, DWConvTranspose2d, C3x}:
             c1, c2 = ch[f], args[0]
             if c2 != no:  # if not output
                 c2 = make_divisible(c2 * gw, 8)

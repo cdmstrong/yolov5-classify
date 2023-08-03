@@ -54,7 +54,7 @@ from utils.torch_utils import select_device, smart_inference_mode
 
 @smart_inference_mode()
 def run(
-        weights=ROOT / 'yolov5s-cls.pt',  # model.pt path(s)
+        weights=ROOT / 'weights/luosi.pt',  # model.pt path(s)
         source=ROOT / 'data/images',  # file/dir/URL/glob/screen/0(webcam)
         data=ROOT / 'data/coco128.yaml',  # dataset.yaml path
         imgsz=(224, 224),  # inference size (height, width)
@@ -88,6 +88,7 @@ def run(
     # Load model
     device = select_device(device)
     model = DetectMultiBackend(weights, device=device, dnn=dnn, data=data, fp16=half)
+    model.eval()
     stride, names, pt = model.stride, model.names, model.pt
     imgsz = check_img_size(imgsz, s=stride)  # check image size
 
@@ -116,13 +117,16 @@ def run(
         # Inference
         with dt[1]:
             results = model(im)
-
+            print(im)
+            print(im.shape)
+            print(f"pre result: {results}\n")
         # Post-process
         with dt[2]:
             pred = F.softmax(results, dim=1)  # probabilities
 
         # Process predictions
         for i, prob in enumerate(pred):  # per image
+            print(f"prob: {prob}\n")
             seen += 1
             if webcam:  # batch_size >= 1
                 p, im0, frame = path[i], im0s[i].copy(), dataset.count
@@ -140,8 +144,8 @@ def run(
             # Print results
             top5i = prob.argsort(0, descending=True)[:5].tolist()  # top 5 indices
             s += f"{', '.join(f'{names[j]} {prob[j]:.2f}' for j in top5i)}, "
-
-            # Write results
+            print(f"top5 is {top5i[0]}, {top5i[1]}")
+            # Write results 
             text = '\n'.join(f'{prob[j]:.2f} {names[j]}' for j in top5i)
             if save_img or view_img:  # Add bbox to image
                 annotator.text((32, 32), text, txt_color=(255, 255, 255))
@@ -193,10 +197,10 @@ def run(
 
 def parse_opt():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--weights', nargs='+', type=str, default=ROOT / 'yolov5s-cls.pt', help='model path(s)')
-    parser.add_argument('--source', type=str, default=ROOT / 'data/images', help='file/dir/URL/glob/screen/0(webcam)')
+    parser.add_argument('--weights', nargs='+', type=str, default=ROOT / 'weights/luosi.pt', help='model path(s)')
+    parser.add_argument('--source', type=str, default=ROOT / 'data/classify/data_patch/113443720.bmp', help='file/dir/URL/glob/screen/0(webcam)')
     parser.add_argument('--data', type=str, default=ROOT / 'data/coco128.yaml', help='(optional) dataset.yaml path')
-    parser.add_argument('--imgsz', '--img', '--img-size', nargs='+', type=int, default=[224], help='inference size h,w')
+    parser.add_argument('--imgsz', '--img', '--img-size', nargs='+', type=int, default=[64], help='inference size h,w')
     parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--view-img', action='store_true', help='show results')
     parser.add_argument('--save-txt', action='store_true', help='save results to *.txt')
@@ -217,7 +221,7 @@ def parse_opt():
 
 
 def main(opt):
-    check_requirements(exclude=('tensorboard', 'thop'))
+    check_requirements(ROOT / 'requirements.txt', exclude=('tensorboard', 'thop'))
     run(**vars(opt))
 
 

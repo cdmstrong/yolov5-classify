@@ -16,7 +16,7 @@ from utils.loggers.wandb.wandb_utils import WandbLogger
 from utils.plots import plot_images, plot_labels, plot_results
 from utils.torch_utils import de_parallel
 
-LOGGERS = ('csv', 'tb', 'wandb', 'clearml', 'comet')  # *.csv, TensorBoard, Weights & Biases, ClearML
+LOGGERS = ('csv', 'tb',  'clearml', 'comet')  # *.csv, TensorBoard, Weights & Biases, ClearML, 'wandb',
 RANK = int(os.getenv('RANK', -1))
 
 try:
@@ -37,7 +37,7 @@ try:
             wandb = None
 except (ImportError, AssertionError):
     wandb = None
-
+wandb = None
 try:
     import clearml
 

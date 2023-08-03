@@ -64,6 +64,8 @@ VOC/
 darknet53.conv.74
 yolov3-tiny.conv.15
 
+!weights/yolov5s-cls.pt
+
 # GitHub Python GitIgnore ----------------------------------------------------------------------------------------------
 # Byte-compiled / optimized / DLL files
 __pycache__/

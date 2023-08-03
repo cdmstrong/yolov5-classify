@@ -14,7 +14,10 @@ class SiLU(nn.Module):
     def forward(x):
         return x * torch.sigmoid(x)
 
-
+class Sigmod(nn.Module):
+    @staticmethod
+    def forward(x):
+        return torch.sigmoid(x)
 class Hardswish(nn.Module):
     # Hard-SiLU activation
     @staticmethod
