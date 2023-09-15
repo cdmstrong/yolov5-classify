@@ -107,16 +107,20 @@ def train(opt, device):
 
     # Model
     with torch_distributed_zero_first(LOCAL_RANK), WorkingDirectory(ROOT):
-        if Path(opt.model).is_file() or opt.model.endswith('.pt'):
-            model = attempt_load(opt.model, device='cpu', fuse=False)
-        elif opt.model in torchvision.models.__dict__:  # TorchVision models i.e. resnet50, efficientnet_b0
-            model = torchvision.models.__dict__[opt.model](weights='IMAGENET1K_V1' if pretrained else None)
+        if opt.cfg:
+            model = ClassificationModel(cfg = opt.cfg, nc = nc)
         else:
-            m = hub.list('ultralytics/yolov5')  # + hub.list('pytorch/vision')  # models
-            raise ModuleNotFoundError(f'--model {opt.model} not found. Available models are: \n' + '\n'.join(m))
-        if isinstance(model, DetectionModel):
-            LOGGER.warning("WARNING ⚠️ pass YOLOv5 classifier model with '-cls' suffix, i.e. '--model yolov5s-cls.pt'")
-            model = ClassificationModel(model=model, nc=nc, cutoff=opt.cutoff or 10)  # convert to classification model
+            if Path(opt.model).is_file() or opt.model.endswith('.pt'):
+                model = attempt_load(opt.model, device='cpu', fuse=False)
+            elif opt.model in torchvision.models.__dict__:  # TorchVision models i.e. resnet50, efficientnet_b0
+                model = torchvision.models.__dict__[opt.model](weights='IMAGENET1K_V1' if pretrained else None)
+            else:
+                m = hub.list('ultralytics/yolov5')  # + hub.list('pytorch/vision')  # models
+                raise ModuleNotFoundError(f'--model {opt.model} not found. Available models are: \n' + '\n'.join(m))
+            print(model.model)
+            if isinstance(model, DetectionModel):
+                LOGGER.warning("WARNING ⚠️ pass YOLOv5 classifier model with '-cls' suffix, i.e. '--model yolov5s-cls.pt'")
+                model = ClassificationModel(model=model, nc=nc, cutoff=opt.cutoff or 10)  # convert to classification model
         reshape_classifier_output(model, nc)  # update class count
     for m in model.modules():
         if not pretrained and hasattr(m, 'reset_parameters'):
@@ -271,6 +275,7 @@ def train(opt, device):
 def parse_opt(known=False):
     parser = argparse.ArgumentParser()
     parser.add_argument('--model', type=str, default='weights/luosi.pt', help='initial weights path')
+    parser.add_argument('--cfg', type=str, default='models/yolov5-cls.yaml', help='initial cfg path')
     parser.add_argument('--data', type=str, default='imagenette160', help='cifar10, cifar100, mnist, imagenet, ...')
     parser.add_argument('--epochs', type=int, default=60, help='total training epochs')
     parser.add_argument('--batch-size', type=int, default=32, help='total batch size for all GPUs')

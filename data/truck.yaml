@@ -15,4 +15,5 @@ val: val/images/  # val images (relative to 'path') 128 images
 # Classes
 names:
   0: truck
+  1: truck1
   
